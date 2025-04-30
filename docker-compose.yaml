@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: electric
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5555:5432"
+    volumes:
+      - ./postgres/postgres.conf:/etc/postgresql.conf:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00_shared_init.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data:noatime,size=10g
+      - /tmp:noatime
+    entrypoint:
+      - docker-entrypoint.sh
+      - -c
+      - config_file=/etc/postgresql.conf
+    # https://stackoverflow.com/a/67059603
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    attach: false
+
+  electric:
+    build:
+      context: ../electric-main/packages/sync-service
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/electric?sslmode=disable"
+      ELECTRIC_LOG_LEVEL: "warning"
+      ELECTRIC_INSECURE: "true"
+      ELECTRIC_STORAGE_DIR: "/var/db/electric"
+      ELECTRIC_ENABLE_INTEGRATION_TESTING: "true"
+      # ELECTRIC_STATSD_HOST: "metric-writer"
+      # ELECTRIC_TELEMETRY_URL: "http://metric-writer:8125"
+    tmpfs:
+      - /var/db/electric:noatime,size=10g
+      - /tmp:noatime,size=10g
+    ports:
+      - "3333:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  varnish:
+    build:
+      context: ./varnish
+      args:
+        BACKEND_HOST: "electric"
+        BACKEND_PORT: "3000"
+    ports:
+      - 8888:8888
+    command: ["-a", ":8888"]
+    tmpfs:
+      - /var/lib/varnish/varnishd:exec
+      - /tmp
+    depends_on:
+      - electric
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
+      memlock:
+        soft: -1
+        hard: -1
+    sysctls:
+      "net.ipv4.tcp_tw_reuse": "1"
+      "net.ipv4.tcp_timestamps": "1"
+      "net.ipv4.tcp_rmem": "1024 4096 16384"
+      "net.ipv4.tcp_wmem": "1024 4096 16384"
+    attach: false
+
+  control:
+    build:
+      context: ./load_generator
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/electric?sslmode=disable"
+      # varnish hides errors resulting from many clients connecting to the same shape
+      # ELECTRIC_URL: "http://varnish:8888"
+      ELECTRIC_URL: "http://electric:3000"
+      TABLE: "items"
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      varnish:
+        condition: service_started
+      electric:
+        condition: service_healthy
