@@ -23,11 +23,15 @@ defmodule LoadGenerator.Mint do
     authenticated_request = Client.authenticate_request(client, request)
 
     case fetcher.fetch(authenticated_request, fetcher_opts) do
-      %Fetch.Response{status: status} = response when status in 200..299 ->
+      {:ok, %Fetch.Response{status: status} = response} when status in 200..299 ->
         response
 
-      %Fetch.Response{} = response ->
+      {:ok, %Fetch.Response{status: 409} = response} ->
         {:error, response}
+
+      # want to just raise if we don't get a good response
+      {:ok, %Fetch.Response{} = response} ->
+        raise "got status #{response.status}"
 
       error ->
         error

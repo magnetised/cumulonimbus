@@ -44,6 +44,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
 
   varnish:
     build:

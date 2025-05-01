@@ -21,6 +21,7 @@ defmodule LoadGenerator.Client do
     client_id = Keyword.fetch!(args, :id)
     stream = Keyword.fetch!(args, :stream)
     LoadGenerator.Stats.register_stat(:client)
+    LoadGenerator.Stats.register_stat(:active_client)
 
     Enum.reduce(stream, {0, nil, false}, fn msg, {c, handle, registered?} ->
       case msg do

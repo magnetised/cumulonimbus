@@ -16,27 +16,32 @@ defmodule LoadGenerator.Application do
     db = System.get_env("DATABASE_URL") || raise "Missing DATABASE_URL"
     electric_url = System.get_env("ELECTRIC_URL") || raise "Missing ELECTRIC_URL"
     table = System.get_env("TABLE", "items")
-    clients = 400
+    clients = 500
 
     children = [
+      {Finch,
+       name: LoadGenerator.Finch,
+       pools: %{
+         electric_url => [size: ceil(clients / 4) + 2, count: 4, start_pool_metrics?: true]
+       }},
       {Registry, name: @process_registry_name, keys: :unique},
       LoadGenerator.Stats,
       {DynamicSupervisor, name: LoadGenerator.ClientSupervisor},
       {LoadGenerator.DB, db: db},
-      {LoadGenerator.ShapeManager, frequency: 1000, electric_url: electric_url},
+      {LoadGenerator.ShapeManager, frequency: 2000, electric_url: electric_url},
       {
         LoadGenerator.PartitionSupervisor,
-        tps: 5,
-        partitions: 2,
+        tps: 1,
+        partitions: 50,
         partition_column: "partition_id",
         table: "items",
         columns: [
           Column.new!(name: "partition_id", type: "uuid"),
-          Column.new!(name: "value", type: "text", generation_size: 128)
+          Column.new!(name: "value", type: "text", generation_size: 60)
         ]
       },
       {LoadGenerator.ClientManager,
-       max_clients: clients, url: electric_url, table: table, mean_client_lifetime: 20_000}
+       max_clients: clients, url: electric_url, table: table, mean_client_lifetime: 5_000}
       # disabled for now as migrating the table while a snapshot is being created results
       # in client errors and we're trying to detect client errors as proof of a bug
       #

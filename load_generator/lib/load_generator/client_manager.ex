@@ -47,6 +47,7 @@ defmodule LoadGenerator.ClientManager do
     receive do
       {:DOWN, ^ref, :process, ^pid, _} ->
         Logger.debug("Client #{id} terminated")
+        LoadGenerator.Stats.register_stat(:active_client, -1)
         {:noreply, start_client(state)}
     after
       5_000 ->
@@ -70,7 +71,7 @@ defmodule LoadGenerator.ClientManager do
       Electric.Client.new(
         base_url: state.electric_url,
         pool: {LoadGenerator.Mint, []},
-        fetch: {LoadGenerator.Mint, []}
+        fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch]]}
       )
 
     {column, partition} = LoadGenerator.PartitionSupervisor.random_partition()

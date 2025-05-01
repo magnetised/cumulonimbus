@@ -8,11 +8,11 @@ defmodule LoadGenerator.ShapeManager do
   end
 
   def register_consumer(handle, pid \\ self()) do
-    GenServer.call(__MODULE__, {:register_consumer, handle, pid})
+    GenServer.call(__MODULE__, {:register_consumer, handle, pid}, :infinity)
   end
 
   def unregister_consumer(pid \\ self()) do
-    GenServer.call(__MODULE__, {:unregister_consumer, pid})
+    GenServer.call(__MODULE__, {:unregister_consumer, pid}, :infinity)
   end
 
   def init(args) do
@@ -61,6 +61,7 @@ defmodule LoadGenerator.ShapeManager do
 
           handles = Map.delete(state.handles, handle)
 
+          IO.inspect(delete: handle)
           delete_shape(handle, state)
 
           %{state | handles: handles}
