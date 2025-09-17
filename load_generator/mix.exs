@@ -29,11 +29,13 @@ defmodule LoadGenerator.MixProject do
       {:postgresql_uri, "~> 0.1.0"},
       {:req, "~> 0.5"},
       {:uuid, "~> 1.1"},
-      {:electric_client,
-       github: "electric-sql/electric",
-       branch: "2606-error-shape-storage-cleanup",
-       subdir: "packages/elixir-client",
-       depth: 1}
+      {:telemetry, "~> 1.3"},
+      {:electric_client, path: "../../electric/packages/elixir-client"}
+      # {:electric_client,
+      #  github: "electric-sql/electric",
+      #  branch: "2606-error-shape-storage-cleanup",
+      #  subdir: "packages/elixir-client",
+      #  depth: 1}
     ]
   end
 end

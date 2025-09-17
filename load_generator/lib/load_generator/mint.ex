@@ -5,6 +5,8 @@ defmodule LoadGenerator.Mint do
   alias Electric.Client
   alias Electric.Client.Fetch
 
+  require Logger
+
   @behaviour Electric.Client.Fetch.Pool
   @behaviour Electric.Client.Fetch
 
@@ -31,7 +33,10 @@ defmodule LoadGenerator.Mint do
 
       # want to just raise if we don't get a good response
       {:ok, %Fetch.Response{} = response} ->
-        raise "got status #{response.status}"
+        Logger.error(status: response.status, body: response.body)
+        # raise "got status #{response.status}"
+
+        {:error, response}
 
       error ->
         error
@@ -44,18 +49,78 @@ defmodule LoadGenerator.Mint do
   end
 
   @impl Electric.Client.Fetch
-  def fetch(%Fetch.Request{} = request, opts) do
-    with {:ok, conn} <- start_connection(request) do
-      LoadGenerator.Mint.Connection.fetch(conn, request, opts)
+  def fetch(%Fetch.Request{} = request, _opts) do
+    uri = Fetch.Request.uri(request, query: true)
+    conn = open(uri)
+
+    {:ok, conn, request_ref} =
+      Mint.HTTP.request(
+        conn,
+        String.upcase(to_string(request.method)),
+        "#{uri.path}?#{uri.query}",
+        Enum.map(request.headers, fn {k, v} -> {to_string(k), to_string(v)} end),
+        nil
+      )
+
+    :telemetry.execute([:client, :http_request], %{})
+
+    receive_request(conn, request_ref, %Fetch.Response{body: []})
+  end
+
+  def open(uri) do
+    if conn = Process.get({__MODULE__, :conn}) do
+      conn
+    else
+      {:ok, conn} = Mint.HTTP1.connect(String.to_atom(uri.scheme), uri.host, uri.port)
+      Process.put({__MODULE__, :conn}, conn)
+      conn
     end
   end
 
-  defp start_connection(%Fetch.Request{stream_id: stream_id} = _request) do
-    DynamicSupervisor.start_child(
-      Electric.Client.RequestSupervisor,
-      {LoadGenerator.Mint.Connection, stream_id}
-    )
-    |> return_existing()
+  def receive_request(conn, ref, response) do
+    receive do
+      message ->
+        case Mint.HTTP.stream(conn, message) do
+          {:ok, conn, responses} ->
+            Enum.reduce(responses, response, fn
+              {:status, ^ref, status}, response ->
+                %{response | status: status}
+
+              {:headers, ^ref, headers}, response ->
+                %{response | headers: Map.new(headers)}
+
+              {:data, ^ref, data}, response ->
+                %{response | body: [response.body | data]}
+
+              {:done, ^ref}, response ->
+                {:halt, response}
+            end)
+            |> case do
+              %Fetch.Response{} = response ->
+                receive_request(conn, ref, response)
+
+              {:halt, response} ->
+                response
+                |> Fetch.Response.decode!()
+                |> finalise()
+            end
+        end
+    end
+  end
+
+  defp finalise(%Fetch.Response{body: iodata} = response) do
+    case iodata
+         |> IO.iodata_to_binary()
+         |> tap(fn body ->
+           LoadGenerator.Stats.register_stat(:bytes, byte_size(body))
+         end)
+         |> Jason.decode() do
+      {:ok, body} ->
+        {:ok, %{response | body: body}}
+
+      {:error, _} ->
+        {:ok, %{response | body: IO.iodata_to_binary(iodata)}}
+    end
   end
 
   defp return_existing({:ok, pid}), do: {:ok, pid}

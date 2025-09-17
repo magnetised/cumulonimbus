@@ -7,10 +7,16 @@ defmodule LoadGenerator.ClientManager do
     GenServer.start_link(__MODULE__, args, name: __MODULE__)
   end
 
+  def consumer_ready(id, handle, pid \\ self()) do
+    GenServer.cast(__MODULE__, {:consumer_ready, id, handle, pid})
+  end
+
   def init(args) do
+    Process.flag(:trap_exit, true)
     {:ok, clients} = Keyword.fetch(args, :max_clients)
     {:ok, electric_url} = Keyword.fetch(args, :url)
     {:ok, table} = Keyword.fetch(args, :table)
+    params = Keyword.get(args, :params, %{})
     mean_client_lifetime = Keyword.get(args, :mean_client_lifetime, 30_000)
     _where = Keyword.get(args, :where, nil)
 
@@ -18,15 +24,18 @@ defmodule LoadGenerator.ClientManager do
       max_clients: clients,
       mean_client_lifetime: mean_client_lifetime,
       electric_url: electric_url,
+      params: params,
       table: table,
       client_id: 0
     }
 
-    {:ok, state, {:continue, :start_clients}}
+    send(self(), {:start_client, clients})
+
+    {:ok, state}
   end
 
   def handle_continue(:start_clients, state) do
-    interval = 50
+    interval = 100
 
     Logger.info("Starting #{state.max_clients} clients")
 
@@ -41,28 +50,61 @@ defmodule LoadGenerator.ClientManager do
     {:noreply, state}
   end
 
-  def handle_info({:terminate_client, id, pid, ref}, state) do
+  def handle_cast({:consumer_ready, id, _handle, pid}, state) do
+    # only schedule the client for termination once it's finished downloading a snapshot chunk
+    lifetime = :rand.uniform(state.mean_client_lifetime)
+    # round(:rand.uniform(round(state.mean_client_lifetime / 2)) + state.mean_client_lifetime / 2)
+
+    Logger.debug("client #{id} with lifetime #{lifetime}")
+    # Process.send_after(self(), {:terminate_client, id, pid}, lifetime)
+
+    {:noreply, state}
+  end
+
+  def handle_info({:start_client, 0}, state) do
+    Logger.info("Started #{state.max_clients} clients")
+    {:noreply, state}
+  end
+
+  def handle_info({:start_client, n}, state) do
+    state = start_client(state)
+
+    Process.send_after(self(), {:start_client, n - 1}, 50)
+
+    {:noreply, state}
+  end
+
+  def handle_info({:terminate_client, id, pid}, state) do
     Process.exit(pid, {:shutdown, :normal})
 
     receive do
-      {:DOWN, ^ref, :process, ^pid, _} ->
+      {:DOWN, _ref, :process, ^pid, _} ->
         Logger.debug("Client #{id} terminated")
         LoadGenerator.Stats.register_stat(:active_client, -1)
         {:noreply, start_client(state)}
     after
-      5_000 ->
+      30_000 ->
         Logger.error("Failed to stop client #{id} within 5000 ms")
-        {:error, state}
+        {:stop, :error, state}
     end
   end
 
   def handle_info({:DOWN, _ref, :process, _pid, _}, state) do
-    Logger.warning("Client crashed, stopping")
-    {:stop, :error, state}
+    Logger.warning("Client crashed, restarting")
+    LoadGenerator.Stats.register_stat(:active_client, -1)
+    # {:stop, :error, state}
+    {:noreply, start_client(state)}
+  end
+
+  def handle_info({:EXIT, _pid, :shutdown}, state) do
+    Logger.warning("Client crashed")
+    LoadGenerator.Stats.register_stat(:active_client, -1)
+
+    {:noreply, state}
   end
 
   defp start_client(%{client_id: client_id} = state) do
-    {:ok, _pid, _ref} = start_client(client_id, state)
+    {:ok, _pid} = start_client(client_id, state)
     %{state | client_id: client_id + 1}
   end
 
@@ -71,7 +113,9 @@ defmodule LoadGenerator.ClientManager do
       Electric.Client.new(
         base_url: state.electric_url,
         pool: {LoadGenerator.Mint, []},
-        fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch]]}
+        # fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch, retry: false]]}
+        fetch: {LoadGenerator.Mint, []},
+        params: state.params
       )
 
     {column, partition} = LoadGenerator.PartitionSupervisor.random_partition()
@@ -82,20 +126,14 @@ defmodule LoadGenerator.ClientManager do
 
     stream = Electric.Client.stream(client, shape)
 
-    lifetime = :rand.uniform(state.mean_client_lifetime)
-    # round(:rand.uniform(round(state.mean_client_lifetime / 2)) + state.mean_client_lifetime / 2)
-
     {:ok, pid} =
       DynamicSupervisor.start_child(
         LoadGenerator.ClientSupervisor,
-        {LoadGenerator.Client, stream: stream, id: id}
+        {LoadGenerator.Client, stream: stream, client: client, id: id}
       )
 
-    ref = Process.monitor(pid)
+    _ref = Process.monitor(pid)
 
-    Logger.debug("started client #{id} with lifetime #{lifetime}")
-    Process.send_after(self(), {:terminate_client, id, pid, ref}, lifetime)
-
-    {:ok, pid, ref}
+    {:ok, pid}
   end
 end

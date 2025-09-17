@@ -11,24 +11,25 @@ backend default {
 }
 
 sub vcl_recv {
-  unset req.http.Cookie;
-  unset req.http.Authorization;
-  set req.url = std.querysort(req.url);
-  if (!req.http.X-Forwarded-Proto) {
-        if(std.port(server.ip) == 443 || std.port(server.ip) == 8443) {
-            set req.http.X-Forwarded-Proto = "https";
-        } else {
-            set req.http.X-Forwarded-Proto = "http";
-        }
-    }
-    if (!req.http.X-Forwarded-For) {
-      set req.http.X-Forwarded-For = client.ip;
-    }
-    if (req.method != "GET" && req.method != "HEAD") {
-        /* We only deal with GET and HEAD by default */
-      return (pass);
-  }
-  return (hash);
+  # unset req.http.Cookie;
+  # unset req.http.Authorization;
+  # set req.url = std.querysort(req.url);
+  # if (!req.http.X-Forwarded-Proto) {
+  #       if(std.port(server.ip) == 443 || std.port(server.ip) == 8443) {
+  #           set req.http.X-Forwarded-Proto = "https";
+  #       } else {
+  #           set req.http.X-Forwarded-Proto = "http";
+  #       }
+  #   }
+  #   if (!req.http.X-Forwarded-For) {
+  #     set req.http.X-Forwarded-For = client.ip;
+  #   }
+  #   if (req.method != "GET" && req.method != "HEAD") {
+  #       /* We only deal with GET and HEAD by default */
+  #     return (pass);
+  # }
+  # return (hash);
+  return (pass);
 }
 
 sub vcl_hash {

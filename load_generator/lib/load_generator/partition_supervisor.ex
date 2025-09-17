@@ -28,7 +28,8 @@ defmodule LoadGenerator.PartitionSupervisor do
     columns = Keyword.fetch!(args, :columns)
     partition_count = Keyword.fetch!(args, :partitions)
     partition_column_name = Keyword.fetch!(args, :partition_column)
-    tps = Keyword.fetch!(args, :tps)
+    [ftps, stps] = Keyword.fetch!(args, :tps)
+    max_rows = Keyword.fetch!(args, :max_rows)
 
     partition_column =
       Enum.find(columns, &(&1.name == partition_column_name)) ||
@@ -44,11 +45,12 @@ defmodule LoadGenerator.PartitionSupervisor do
         {value, LoadGenerator.partition_stream(columns, partition, :binary)}
       end)
 
-    generator_tps = tps / partition_count
+    generator_ftps = ftps / partition_count
 
     generators =
       Enum.map(streams, fn {id, stream} ->
-        {LoadGenerator.DbLoad, id: id, table: table, stream: stream, tps: generator_tps}
+        {LoadGenerator.DbLoad,
+         id: id, table: table, stream: stream, tps: [generator_ftps, stps], max_rows: max_rows}
       end)
 
     children =

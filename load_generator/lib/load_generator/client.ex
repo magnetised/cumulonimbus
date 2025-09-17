@@ -23,21 +23,22 @@ defmodule LoadGenerator.Client do
     LoadGenerator.Stats.register_stat(:client)
     LoadGenerator.Stats.register_stat(:active_client)
 
-    Enum.reduce(stream, {0, nil, false}, fn msg, {c, handle, registered?} ->
+    Enum.reduce(stream, {0, nil, false, false}, fn msg, {c, handle, monitored?, registered?} ->
       case msg do
         %Electric.Client.Message.ChangeMessage{
-          value: %{"id" => row_id, "inserted_at" => _row_inserted_at},
+          value: %{"id" => row_id},
           headers: %{operation: _operation, handle: handle},
           request_timestamp: _request_timestamp
         } ->
+          if !monitored?, do: LoadGenerator.ClientManager.consumer_ready(client_id, handle)
+
           if !registered?, do: LoadGenerator.ShapeManager.register_consumer(handle)
-          {row_id, handle, true}
+          LoadGenerator.Stats.register_stat(:change)
+
+          {row_id, handle, true, true}
 
         %Electric.Client.Message.ControlMessage{control: :up_to_date} ->
-          if rem(c, 100) == 0, do: Logger.debug(client: client_id, id: c)
-          # IO.inspect(client: {client_id, :up_to_date})
-          :erlang.garbage_collect()
-          {c, handle, registered?}
+          {c, handle, monitored?, registered?}
 
         %Electric.Client.Message.ControlMessage{control: :must_refetch} ->
           # the handle is going to change so detach this pid from it
@@ -45,7 +46,7 @@ defmodule LoadGenerator.Client do
           LoadGenerator.Stats.register_stat(:refetch)
           :erlang.garbage_collect()
           LoadGenerator.ShapeManager.unregister_consumer()
-          {c, nil, false}
+          {c, nil, monitored?, false}
 
           # msg ->
           #   Logger.warning(client: client_id, msg: inspect(msg))

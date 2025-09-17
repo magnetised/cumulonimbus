@@ -23,16 +23,17 @@ defmodule LoadGenerator.ShapeManager do
       electric_url: electric_url,
       frequency: frequency,
       handles: %{},
+      shapes: MapSet.new(),
       pids: %{}
     }
 
-    {:ok, schedule_deletion(state)}
+    {:ok, schedule_deletion(state)} |> dbg
   end
 
   def handle_call({:register_consumer, handle, pid}, _from, state) do
     Logger.debug(handle: handle, size: map_size(state.handles), pids: map_size(state.pids))
 
-    if !Map.has_key?(state.handles, handle) do
+    if !MapSet.member?(state.shapes, handle) do
       LoadGenerator.Stats.register_stat(:shape_create)
     end
 
@@ -41,7 +42,8 @@ defmodule LoadGenerator.ShapeManager do
     handles = Map.update(state.handles, handle, [pid], &[pid | &1])
     pids = Map.put(state.pids, pid, handle)
 
-    {:reply, :ok, %{state | handles: handles, pids: pids}}
+    {:reply, :ok,
+     %{state | handles: handles, pids: pids, shapes: MapSet.put(state.shapes, handle)}}
   end
 
   def handle_call({:unregister_consumer, pid}, _from, state) do
@@ -61,10 +63,7 @@ defmodule LoadGenerator.ShapeManager do
 
           handles = Map.delete(state.handles, handle)
 
-          IO.inspect(delete: handle)
-          delete_shape(handle, state)
-
-          %{state | handles: handles}
+          delete_shape(handle, %{state | handles: handles})
       end
 
     {:noreply, schedule_deletion(state)}
@@ -77,14 +76,14 @@ defmodule LoadGenerator.ShapeManager do
   end
 
   defp schedule_deletion(state) do
-    Process.send_after(self(), :delete_shape, :rand.uniform(state.frequency * 2))
+    # Process.send_after(self(), :delete_shape, :rand.uniform(state.frequency * 2))
     state
   end
 
   defp remove_consumer(pid, state) do
     {handle, pids} = Map.pop(state.pids, pid)
 
-    handles =
+    state =
       case Map.get_and_update(state.handles, handle, fn
              pids when is_list(pids) ->
                pids = List.delete(pids, pid)
@@ -94,26 +93,28 @@ defmodule LoadGenerator.ShapeManager do
                {[], []}
            end) do
         {[], handles} ->
-          delete_shape(handle, state)
-          Map.delete(handles, handle)
+          delete_shape(handle, %{state | handles: Map.delete(handles, handle)})
 
-        {_pids, handles} ->
-          handles
+        {_pids, _handles} ->
+          state
       end
 
-    %{state | pids: pids, handles: handles}
+    %{state | pids: pids}
   end
 
-  defp delete_shape(nil, _state) do
-    :ok
+  defp delete_shape(nil, state) do
+    state
   end
 
-  defp delete_shape(handle, state) do
-    {:ok, %{status: status}} =
-      Req.delete("#{state.electric_url}/v1/shape", params: %{handle: handle})
+  defp delete_shape(handle, state, n \\ 1) when n < 10 do
+    case Req.delete("#{state.electric_url}/v1/shape", params: %{handle: handle}) do
+      {:ok, %{status: status}} ->
+        if status in 200..299, do: LoadGenerator.Stats.register_stat(:shape_delete)
+        %{state | shapes: MapSet.delete(state.shapes, handle)}
 
-    if status in 200..299, do: LoadGenerator.Stats.register_stat(:shape_delete)
-
-    :ok
+      {:error, %Req.TransportError{}} ->
+        Process.sleep(100)
+        delete_shape(handle, state, n + 1)
+    end
   end
 end
