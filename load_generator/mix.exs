@@ -14,7 +14,7 @@ defmodule LoadGenerator.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :ssl],
       mod: {LoadGenerator.Application, []}
     ]
   end
@@ -32,10 +32,7 @@ defmodule LoadGenerator.MixProject do
       {:telemetry, "~> 1.3"},
       {:electric_client, path: "../../electric/packages/elixir-client"}
       # {:electric_client,
-      #  github: "electric-sql/electric",
-      #  branch: "2606-error-shape-storage-cleanup",
-      #  subdir: "packages/elixir-client",
-      #  depth: 1}
+      #  github: "electric-sql/electric", branch: "main", subdir: "packages/elixir-client", depth: 1}
     ]
   end
 end

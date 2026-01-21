@@ -1,13 +1,11 @@
-defmodule LoadGenerator.DbLoad do
+defmodule LoadGenerator.Turbo.DbLoad do
   use Task, restart: :transient
 
   require Logger
 
   def child_spec(arg) do
-    id = Keyword.fetch!(arg, :id)
-
     %{
-      id: {__MODULE__, id},
+      id: {__MODULE__, arg[:id] || 1},
       start: {__MODULE__, :start_link, [arg]},
       restart: :transient
     }
@@ -61,8 +59,9 @@ defmodule LoadGenerator.DbLoad do
   def run(opts) do
     db = Keyword.get(opts, :db, LoadGenerator.DB)
     table = Keyword.fetch!(opts, :table)
-    stream = Keyword.fetch!(opts, :stream)
+    streams = Keyword.fetch!(opts, :streams)
     max_rows = Keyword.fetch!(opts, :max_rows)
+    rows_per_partition = Keyword.fetch!(opts, :rows_per_partition)
 
     duration =
       case Keyword.get(opts, :duration, :infinity) do
@@ -94,44 +93,49 @@ defmodule LoadGenerator.DbLoad do
             Task.async(fn ->
               test = Fast.init(fast_tps)
 
-              Enum.reduce_while(stream, {test, 0}, fn row, {test, c} ->
-                {module, state} = test
-                {insert?, n, state} = module.insert?(state)
+              Enum.reduce(streams, test, fn {id, partition_stream}, test ->
+                insert_partition = Enum.random(rows_per_partition)
 
-                if insert? do
-                  dbg(row)
-                  LoadGenerator.DB.insert!(table, row, db)
+                {test, _} =
+                  Enum.reduce_while(partition_stream, {test, 0}, fn row, {test, c} ->
+                    {module, state} = test
+                    {insert?, n, state} = module.insert?(state)
 
-                  value = inspect(row)
+                    if insert? do
+                      LoadGenerator.DB.insert!(table, row, db)
 
-                  send(
-                    collector,
-                    {:txn, p, n, [binary_part(value, 0, min(byte_size(value), 32)), "..."],
-                     byte_size(value)}
-                  )
+                      value = inspect(row)
 
-                  if n >= insert_rows do
-                    test = Slow.init(slow_tps)
-                    {:cont, {test, c + 1}}
-                  else
-                    {:cont, {{module, state}, c + 1}}
-                  end
-                else
-                  c =
-                    if c >= 100 do
-                      :erlang.garbage_collect()
-                      0
+                      send(
+                        collector,
+                        {:txn, p, n, [binary_part(value, 0, min(byte_size(value), 32)), "..."],
+                         byte_size(value)}
+                      )
+
+                      if n >= insert_rows do
+                        test = Slow.init(slow_tps)
+                        {:cont, {test, c + 1}}
+                      else
+                        {:cont, {{module, state}, c + 1}}
+                      end
                     else
-                      Process.sleep(1)
-                      c
+                      if c >= insert_partition do
+                        :erlang.garbage_collect()
+                        {:halt, {test, 0}}
+                      else
+                        Process.sleep(1)
+                        {:cont, {test, c}}
+                      end
                     end
+                  end)
 
-                  {:cont, {test, c}}
-                end
+                test
               end)
             end)
 
-          {task, max(insert_rows - rows_per_thread, 0)}
+          {task,
+           {remaining_ftps - fast_tps, remaining_stps - slow_tps,
+            max(insert_rows - rows_per_thread, 0)}}
         end
       )
 

@@ -1,5 +1,5 @@
 defmodule LoadGenerator.ClientManager do
-  use GenServer, significant: true, restart: :transient
+  use GenServer, restart: :transient
 
   require Logger
 
@@ -10,6 +10,8 @@ defmodule LoadGenerator.ClientManager do
   def consumer_ready(id, handle, pid \\ self()) do
     GenServer.cast(__MODULE__, {:consumer_ready, id, handle, pid})
   end
+
+  def client, do: GenServer.call(__MODULE__, :client)
 
   def init(args) do
     Process.flag(:trap_exit, true)
@@ -50,13 +52,17 @@ defmodule LoadGenerator.ClientManager do
     {:noreply, state}
   end
 
+  def handle_call(:client, _from, state) do
+    {:reply, client(state), state}
+  end
+
   def handle_cast({:consumer_ready, id, _handle, pid}, state) do
     # only schedule the client for termination once it's finished downloading a snapshot chunk
     lifetime = :rand.uniform(state.mean_client_lifetime)
     # round(:rand.uniform(round(state.mean_client_lifetime / 2)) + state.mean_client_lifetime / 2)
 
     Logger.debug("client #{id} with lifetime #{lifetime}")
-    # Process.send_after(self(), {:terminate_client, id, pid}, lifetime)
+    Process.send_after(self(), {:terminate_client, id, pid}, lifetime)
 
     {:noreply, state}
   end
@@ -84,19 +90,21 @@ defmodule LoadGenerator.ClientManager do
         {:noreply, start_client(state)}
     after
       30_000 ->
-        Logger.error("Failed to stop client #{id} within 5000 ms")
-        {:stop, :error, state}
+        # client will be restarted by :DOWN/:EXIT message
+        Logger.warning("Failed to stop client #{id} within 5000 ms")
+        Process.exit(pid, :kill)
+        {:noreply, start_client(state)}
     end
   end
 
   def handle_info({:DOWN, _ref, :process, _pid, _}, state) do
-    Logger.warning("Client crashed, restarting")
+    Logger.warning("Client down, restarting")
     LoadGenerator.Stats.register_stat(:active_client, -1)
     # {:stop, :error, state}
     {:noreply, start_client(state)}
   end
 
-  def handle_info({:EXIT, _pid, :shutdown}, state) do
+  def handle_info({:EXIT, _pid, _}, state) do
     Logger.warning("Client crashed")
     LoadGenerator.Stats.register_stat(:active_client, -1)
 
@@ -108,21 +116,22 @@ defmodule LoadGenerator.ClientManager do
     %{state | client_id: client_id + 1}
   end
 
+  defp client(state) do
+    Electric.Client.new(
+      base_url: state.electric_url,
+      pool: {LoadGenerator.Mint, []},
+      # fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch, retry: false]]}
+      fetch: {LoadGenerator.Mint, []},
+      params: state.params
+    )
+  end
+
   defp start_client(id, state) do
-    {:ok, client} =
-      Electric.Client.new(
-        base_url: state.electric_url,
-        pool: {LoadGenerator.Mint, []},
-        # fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch, retry: false]]}
-        fetch: {LoadGenerator.Mint, []},
-        params: state.params
-      )
+    {:ok, client} = client(state)
 
     {column, partition} = LoadGenerator.PartitionSupervisor.random_partition()
 
-    where = "#{column} = '#{partition}'"
-
-    {:ok, shape} = Electric.Client.shape(state.table, where: where)
+    {:ok, shape} = shape(state.table, column, partition)
 
     stream = Electric.Client.stream(client, shape)
 
@@ -135,5 +144,9 @@ defmodule LoadGenerator.ClientManager do
     _ref = Process.monitor(pid)
 
     {:ok, pid}
+  end
+
+  def shape(table, column, partition) do
+    Electric.Client.shape(table, where: "#{column} = '#{partition}'")
   end
 end

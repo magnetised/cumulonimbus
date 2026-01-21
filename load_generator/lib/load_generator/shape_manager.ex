@@ -18,16 +18,20 @@ defmodule LoadGenerator.ShapeManager do
   def init(args) do
     frequency = Keyword.fetch!(args, :frequency)
     electric_url = Keyword.fetch!(args, :electric_url)
+    delete = Keyword.get(args, :delete, true)
+    delete_unused = Keyword.get(args, :delete_unused, true)
 
     state = %{
       electric_url: electric_url,
       frequency: frequency,
       handles: %{},
       shapes: MapSet.new(),
-      pids: %{}
+      pids: %{},
+      delete: delete,
+      delete_unused: delete_unused
     }
 
-    {:ok, schedule_deletion(state)} |> dbg
+    {:ok, schedule_deletion(state)}
   end
 
   def handle_call({:register_consumer, handle, pid}, _from, state) do
@@ -53,6 +57,8 @@ defmodule LoadGenerator.ShapeManager do
   end
 
   def handle_info(:delete_shape, state) do
+    dbg(delete: Map.size(state.handles))
+
     state =
       case Map.keys(state.handles) do
         [] ->
@@ -76,7 +82,9 @@ defmodule LoadGenerator.ShapeManager do
   end
 
   defp schedule_deletion(state) do
-    # Process.send_after(self(), :delete_shape, :rand.uniform(state.frequency * 2))
+    if state.delete,
+      do: Process.send_after(self(), :delete_shape, :rand.uniform(state.frequency * 2))
+
     state
   end
 
@@ -93,7 +101,9 @@ defmodule LoadGenerator.ShapeManager do
                {[], []}
            end) do
         {[], handles} ->
-          delete_shape(handle, %{state | handles: Map.delete(handles, handle)})
+          if state.delete_unused,
+            do: delete_shape(handle, %{state | handles: Map.delete(handles, handle)}),
+            else: state
 
         {_pids, _handles} ->
           state
@@ -109,7 +119,11 @@ defmodule LoadGenerator.ShapeManager do
   defp delete_shape(handle, state, n \\ 1) when n < 10 do
     case Req.delete("#{state.electric_url}/v1/shape", params: %{handle: handle}) do
       {:ok, %{status: status}} ->
-        if status in 200..299, do: LoadGenerator.Stats.register_stat(:shape_delete)
+        if status in 200..299 do
+          LoadGenerator.Stats.register_stat(:shape_delete)
+          Logger.debug("Deleted shape #{handle}")
+        end
+
         %{state | shapes: MapSet.delete(state.shapes, handle)}
 
       {:error, %Req.TransportError{}} ->

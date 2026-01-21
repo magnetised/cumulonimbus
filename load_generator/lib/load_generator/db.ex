@@ -5,14 +5,21 @@ defmodule LoadGenerator.DB do
 
   def start_link(opts) when is_list(opts) do
     db_url = Keyword.fetch!(opts, :db)
-    pool_size = Keyword.get(opts, :pool_size, 20)
+    pool_size = Keyword.get(opts, :pool_size, 20) |> dbg
     start_link(db_url, pool_size)
   end
 
   def start_link(url, pool_size \\ 20) do
     connection_config = PostgresqlUri.parse(url)
 
-    Postgrex.start_link(connection_config ++ [pool_size: pool_size, name: __MODULE__])
+    Postgrex.start_link(
+      Keyword.merge(
+        connection_config,
+        pool_size: pool_size,
+        name: __MODULE__
+        # ssl: [verify: :verify_peer, cacerts: :public_key.cacerts_get()]
+      )
+    )
   end
 
   def insert_query(table, row) do

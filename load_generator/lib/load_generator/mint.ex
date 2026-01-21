@@ -53,18 +53,18 @@ defmodule LoadGenerator.Mint do
     uri = Fetch.Request.uri(request, query: true)
     conn = open(uri)
 
-    {:ok, conn, request_ref} =
-      Mint.HTTP.request(
-        conn,
-        String.upcase(to_string(request.method)),
-        "#{uri.path}?#{uri.query}",
-        Enum.map(request.headers, fn {k, v} -> {to_string(k), to_string(v)} end),
-        nil
-      )
+    with {:ok, conn, request_ref} <-
+           Mint.HTTP.request(
+             conn,
+             String.upcase(to_string(request.method)),
+             "#{uri.path}?#{uri.query}",
+             Enum.map(request.headers, fn {k, v} -> {to_string(k), to_string(v)} end),
+             nil
+           ) do
+      :telemetry.execute([:client, :http_request], %{})
 
-    :telemetry.execute([:client, :http_request], %{})
-
-    receive_request(conn, request_ref, %Fetch.Response{body: []})
+      receive_request(conn, request_ref, %Fetch.Response{body: []})
+    end
   end
 
   def open(uri) do

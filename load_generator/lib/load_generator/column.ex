@@ -64,6 +64,14 @@ defmodule LoadGenerator.Column do
     generate(column.type, column.generation_size)
   end
 
+  def load!(%__MODULE__{type: "uuid"}, value) do
+    UUID.binary_to_string!(value)
+  end
+
+  def load!(_column, value) do
+    value
+  end
+
   defp generate("text", nil) do
     generate("text", 10..128)
   end
