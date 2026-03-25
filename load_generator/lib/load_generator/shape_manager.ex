@@ -131,4 +131,8 @@ defmodule LoadGenerator.ShapeManager do
         delete_shape(handle, state, n + 1)
     end
   end
+
+  defp delete_shape(handle, state, 10) do
+    :ok
+  end
 end

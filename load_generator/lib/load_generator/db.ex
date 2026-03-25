@@ -16,8 +16,8 @@ defmodule LoadGenerator.DB do
       Keyword.merge(
         connection_config,
         pool_size: pool_size,
-        name: __MODULE__
-        # ssl: [verify: :verify_peer, cacerts: :public_key.cacerts_get()]
+        name: __MODULE__,
+        # ssl: [cacerts: :public_key.cacerts_get()]
       )
     )
   end

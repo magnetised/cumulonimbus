@@ -15,14 +15,14 @@ defmodule LoadGenerator.Scenario.Turbo do
     table = Keyword.fetch!(args, :table)
     source_id = Keyword.fetch!(args, :source_id)
     source_secret = Keyword.fetch!(args, :source_secret)
-    clients = 15000
+    clients = 1000
 
     children = [
       {DynamicSupervisor,
        name: LoadGenerator.ClientSupervisor, max_restarts: clients, max_seconds: 60 * 60},
       {LoadGenerator.DB, db: db, pool_size: 100},
       {LoadGenerator.ShapeManager,
-       frequency: 1000, electric_url: electric_url, delete: false, delete_unused: false},
+       frequency: 1000, electric_url: electric_url, delete: true, delete_unused: false},
       {
         LoadGenerator.PartitionSupervisor,
         tps: [5, 5],
@@ -47,7 +47,7 @@ defmodule LoadGenerator.Scenario.Turbo do
       #
       # {LoadGenerator.TableMutator,
       #  table: table, column: "mutating", types: ["text", "integer"], frequency: 10_000},
-      {LoadGenerator.ShapeCreation, [table: table, parallel: 8000]}
+      {LoadGenerator.ShapeCreation, [table: table, parallel: 1000]}
     ]
 
     Supervisor.init(children, strategy: :one_for_all)
