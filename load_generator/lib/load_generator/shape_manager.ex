@@ -57,7 +57,7 @@ defmodule LoadGenerator.ShapeManager do
   end
 
   def handle_info(:delete_shape, state) do
-    dbg(delete: Map.size(state.handles))
+    # dbg(delete: Map.size(state.handles))
 
     state =
       case Map.keys(state.handles) do

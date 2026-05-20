@@ -1,0 +1,78 @@
+# docker-compose.benchmark.yaml
+#
+# Used by bin/benchmark-allocator.sh to run Electric with either glibc or
+# jemalloc and collect memory/performance metrics via the load_generator.
+#
+# The ELECTRIC_IMAGE env var selects which pre-built image to use.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: electric
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5555:5432"
+    volumes:
+      - ./postgres/postgres.conf:/etc/postgresql.conf:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00_shared_init.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data:noatime,size=30g
+      - /tmp:noatime
+    entrypoint:
+      - docker-entrypoint.sh
+      - -c
+      - config_file=/etc/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    attach: false
+
+  electric:
+    image: ${ELECTRIC_IMAGE:-electric:bench-glibc}
+    environment:
+      MIX_ENV: "prod"
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/electric?sslmode=disable"
+      ELECTRIC_LOG_LEVEL: "info"
+      ELECTRIC_INSECURE: "true"
+      ELECTRIC_STORAGE_DIR: "/var/db/electric"
+      ELECTRIC_ENABLE_INTEGRATION_TESTING: "true"
+      ELECTRIC_PROCESS_SPAWN_OPTS: '{"shape_log_collector":{"min_heap_size":1048576,"min_bin_vheap_size":1048576,"priority":"high"}}'
+      ELECTRIC_MAX_CONCURRENT_REQUESTS: '{"initial":30000,"existing":100000}'
+      ELECTRIC_TWEAKS_CONN_MAX_REQUESTS: "1000000"
+    tmpfs:
+      - /var/db/electric:noatime,size=10g
+      - /tmp:noatime,size=10g
+    ports:
+      - "3333:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
+
+  load_generator:
+    build:
+      context: ./load_generator
+    sysctls:
+      net.ipv4.ip_local_port_range: "15000 61000"
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/electric?sslmode=disable"
+      ELECTRIC_URL: "http://electric:3000"
+      SOURCE_ID: "place-holder"
+      SECRET: "place-holder"
+      TABLE: "items"
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      electric:
+        condition: service_healthy

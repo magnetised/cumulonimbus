@@ -1,4 +1,4 @@
-defmodule LoadGenerator.Scenario.Turbo do
+defmodule LoadGenerator.Scenario.Superset do
   use Supervisor
 
   alias LoadGenerator.Column
@@ -11,23 +11,23 @@ defmodule LoadGenerator.Scenario.Turbo do
     # in this scenario, don't expect to see a lot of messages from the clients --
     # there are so many partitions that each doesn't get much activity
     db = Keyword.fetch!(args, :db)
-    electric_url = Keyword.fetch!(args, :electric_url)
+    electric_urls = Keyword.fetch!(args, :electric_urls)
     table = Keyword.fetch!(args, :table)
     source_id = Keyword.fetch!(args, :source_id)
     source_secret = Keyword.fetch!(args, :source_secret)
-    clients = 1000
+    clients = 50_000
 
     children = [
       {DynamicSupervisor,
        name: LoadGenerator.ClientSupervisor, max_restarts: clients, max_seconds: 60 * 60},
       {LoadGenerator.DB, db: db, pool_size: 100},
       {LoadGenerator.ShapeManager,
-       frequency: 1000, electric_url: electric_url, delete: true, delete_unused: false},
+       frequency: 1000, electric_url: hd(electric_urls), delete: true, delete_unused: false},
       {
         LoadGenerator.PartitionSupervisor,
         tps: [5, 5],
         max_rows: 20,
-        partitions: 200_000,
+        partitions: 100_000,
         partition_column: "partition_id",
         table: table,
         get_existing: true,
@@ -38,10 +38,10 @@ defmodule LoadGenerator.Scenario.Turbo do
       },
       {LoadGenerator.ClientManager,
        max_clients: clients,
-       url: electric_url,
+       urls: electric_urls,
        params: %{source_id: source_id, secret: source_secret},
        table: table,
-       mean_client_lifetime: 6000},
+       mean_client_lifetime: 120_000},
       # disabled for now as migrating the table while a snapshot is being created results
       # in client errors and we're trying to detect client errors as proof of a bug
       #

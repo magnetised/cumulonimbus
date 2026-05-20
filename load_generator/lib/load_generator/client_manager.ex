@@ -16,7 +16,7 @@ defmodule LoadGenerator.ClientManager do
   def init(args) do
     Process.flag(:trap_exit, true)
     {:ok, clients} = Keyword.fetch(args, :max_clients)
-    {:ok, electric_url} = Keyword.fetch(args, :url)
+    {:ok, electric_urls} = Keyword.fetch(args, :urls)
     {:ok, table} = Keyword.fetch(args, :table)
     params = Keyword.get(args, :params, %{})
     mean_client_lifetime = Keyword.get(args, :mean_client_lifetime, 30_000)
@@ -25,7 +25,7 @@ defmodule LoadGenerator.ClientManager do
     state = %{
       max_clients: clients,
       mean_client_lifetime: mean_client_lifetime,
-      electric_url: electric_url,
+      electric_urls: electric_urls,
       params: params,
       table: table,
       client_id: 0
@@ -45,7 +45,7 @@ defmodule LoadGenerator.ClientManager do
       Enum.reduce(1..state.max_clients, state, fn _, state ->
         state = start_client(state)
 
-        Process.sleep(interval)
+        Process.sleep(Enum.random(1..interval))
         state
       end)
 
@@ -75,7 +75,7 @@ defmodule LoadGenerator.ClientManager do
   def handle_info({:start_client, n}, state) do
     state = start_client(state)
 
-    Process.send_after(self(), {:start_client, n - 1}, 50)
+    Process.send_after(self(), {:start_client, n - 1}, Enum.random(0..10))
 
     {:noreply, state}
   end
@@ -118,7 +118,7 @@ defmodule LoadGenerator.ClientManager do
 
   defp client(state) do
     Electric.Client.new(
-      base_url: state.electric_url,
+      base_url: Enum.random(state.electric_urls),
       pool: {LoadGenerator.Mint, []},
       # fetch: {Electric.Client.Fetch.HTTP, [request: [finch: LoadGenerator.Finch, retry: false]]}
       fetch: {LoadGenerator.Mint, []},

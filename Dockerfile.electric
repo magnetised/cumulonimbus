@@ -39,8 +39,11 @@ RUN ls -l /app/_build
 
 FROM ${RUNNER_IMAGE} AS runner_setup
 
+ARG USE_JEMALLOC=false
+
 RUN apt-get update -y && \
-  apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates curl && \
+  apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates curl \
+    $([ "$USE_JEMALLOC" = "true" ] && echo "libjemalloc2") && \
   apt-get clean && \
   rm -f /var/lib/apt/lists/*_*
 
@@ -59,11 +62,29 @@ RUN chown nobody /app
 FROM runner_setup AS runner
 
 ARG RELEASE_NAME=electric
+ARG USE_JEMALLOC=false
 
+# When USE_JEMALLOC=true, preload jemalloc so all malloc/free calls from the
+# BEAM's erts_alloc go through jemalloc instead of glibc's allocator.
+# Docker ENV treats the string "false" as non-empty, so we can't use
+# ${VAR:+value} syntax. Instead, create a wrapper script that conditionally
+# sets LD_PRELOAD before exec'ing the release.
+RUN if [ "$USE_JEMALLOC" = "true" ]; then \
+      echo "JEMALLOC=true" > /app/.allocator; \
+    else \
+      echo "JEMALLOC=false" > /app/.allocator; \
+    fi
 
 COPY --from=builder "/app/_build/prod/rel/${RELEASE_NAME}" ./
 
-RUN mv /app/bin/${RELEASE_NAME} /app/bin/entrypoint
+RUN mv /app/bin/${RELEASE_NAME} /app/bin/release
+
+# Wrapper entrypoint that conditionally sets LD_PRELOAD
+RUN printf '#!/bin/sh\n\
+if [ "$(cat /app/.allocator)" = "JEMALLOC=true" ]; then\n\
+  export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2\n\
+fi\n\
+exec /app/bin/release "$@"\n' > /app/bin/entrypoint && chmod +x /app/bin/entrypoint
 
 HEALTHCHECK --start-period=10s CMD curl --fail http://localhost:${ELECTRIC_PORT-3000}/v1/health || exit 1
 
